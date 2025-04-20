@@ -4,7 +4,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime
-from db import contests_table, users_table, User, Contest
+from db import contests_table, users_table, User
 from config import ADMIN_IDS
 
 class AdminStates(StatesGroup):
@@ -15,7 +15,6 @@ class AdminStates(StatesGroup):
     AdjustUser  = State()
     AdjustAmt   = State()
 
-# /admin – точка входа в панель
 async def cmd_admin(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
@@ -25,9 +24,7 @@ async def cmd_admin(message: types.Message):
       InlineKeyboardButton("💰 Управление Jam Coins", callback_data="adm_adjust_coins")
     )
     await message.answer("🔧 Админ‑панель:", reply_markup=kb)
-
-# Нажатие в админ‑меню
-async def admin_callback(call: types.CallbackQuery, state: FSMContext):
+    async def admin_callback(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS:
         return
     data = call.data
@@ -36,10 +33,9 @@ async def admin_callback(call: types.CallbackQuery, state: FSMContext):
         await call.message.answer("Введите имя нового конкурса:")
     elif data=="adm_adjust_coins":
         await AdminStates.AdjustUser.set()
-        await call.message.answer("Введите ID пользователя, баланс которого нужно изменить:")
+        await call.message.answer("Введите ID пользователя:")
     await call.answer()
 
-# Создание конкурса пошагово
 async def adm_new_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
     await AdminStates.next()
@@ -53,8 +49,8 @@ async def adm_new_desc(message: types.Message, state: FSMContext):
 async def adm_new_tz(message: types.Message, state: FSMContext):
     await state.update_data(tz=message.text)
     await AdminStates.next()
-    await message.answer("Введите даты старта и финиша в формате YYYY‑MM‑DDTHH:MM, разделённые пробелом:\n"
-                         "например:\n2023-07-01T10:00 2023-07-10T20:00")
+    await message.answer(
+      "Введите даты старта и финиша в формате YYYY‑MM‑DDTHH:MM, разделённые пробелом:")
 
 async def adm_new_dates(message: types.Message, state: FSMContext):
     parts = message.text.split()
@@ -72,7 +68,6 @@ async def adm_new_dates(message: types.Message, state: FSMContext):
         "start": start.isoformat(),
         "end":   end.isoformat()
     })
-    # уведомляем подписавшихся
     for u in users_table.all():
         if u["notify"]:
             try:
@@ -83,10 +78,9 @@ async def adm_new_dates(message: types.Message, state: FSMContext):
                 )
             except:
                 pass
-    await message.answer("✅ Конкурс создан и все подписчики уведомлены.")
+    await message.answer("✅ Конкурс создан и подписчики уведомлены.")
     await state.finish()
 
-# Управление Jam Coins
 async def adm_adj_user(message: types.Message, state: FSMContext):
     try:
         uid = int(message.text)
@@ -94,7 +88,7 @@ async def adm_adj_user(message: types.Message, state: FSMContext):
         await message.answer("Неверный ID. Попробуйте ещё раз.")
         return
     if not users_table.search(User.user_id==uid):
-await message.answer("Пользователь не найден.")
+        await message.answer("Пользователь не найден.")
         return
     await state.update_data(user_id=uid)
     await AdminStates.next()
@@ -116,12 +110,50 @@ async def adm_adj_amt(message: types.Message, state: FSMContext):
 
 def register_handlers(dp):
     dp.register_message_handler(cmd_admin, commands=["admin"])
-    dp.register_callback_query_handler(admin_callback, lambda c: c.from_user.id in ADMIN_IDS)
-
+    dp.register_callback_query_handler(admin_callback,
+                                       lambda c: c.from_user.id in ADMIN_IDS)
     dp.register_message_handler(adm_new_name, state=AdminStates.Name)
     dp.register_message_handler(adm_new_desc, state=AdminStates.Desc)
     dp.register_message_handler(adm_new_tz,   state=AdminStates.Tz)
     dp.register_message_handler(adm_new_dates, state=AdminStates.Dates)
-
     dp.register_message_handler(adm_adj_user, state=AdminStates.AdjustUser)
     dp.register_message_handler(adm_adj_amt,  state=AdminStates.AdjustAmt)
+```
+
+---
+
+Файл main.py  
+```python
+import logging
+from aiogram import Bot, Dispatcher, executor
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+
+import config
+from handlers_user import register_handlers as reg_user
+from handlers_admin import register_handlers as reg_admin
+
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=config.BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+reguser(dp)
+regadmin(dp)
+
+async def onstartup(dp):
+    await bot.setwebhook(config.WEBHOOKURL)
+
+async def onshutdown(dp):
+    await bot.deletewebhook()
+
+if name == "main":
+    executor.startwebhook(
+        dispatcher=dp,
+        webhookpath = config.WEBHOOKPATH,
+        onstartup   = onstartup,
+        onshutdown  = onshutdown,
+        skipupdates = True,
+        host         = config.WEBAPPHOST,
+        port         = config.WEBAPPPORT,
+    )
