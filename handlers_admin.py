@@ -24,7 +24,7 @@ async def cmd_admin(message: types.Message):
       InlineKeyboardButton("💰 Управление Jam Coins", callback_data="adm_adjust_coins")
     )
     await message.answer("🔧 Админ‑панель:", reply_markup=kb)
-    async def admin_callback(call: types.CallbackQuery, state: FSMContext):
+async def admin_callback(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS:
         return
     data = call.data
