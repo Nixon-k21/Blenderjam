@@ -174,7 +174,7 @@ async def process_render2(photo: types.PhotoSize, state: FSMContext,
     renders = data["renders"] + [photo[-1].file_id]
     await state.update_data(renders=renders)
     await ParticipationStates.next()
-                              await message.answer("Загрузите третий рендер.")
+    await message.answer("Загрузите третий рендер.")    
 
 async def process_render3(photo: types.PhotoSize, state: FSMContext,
                           message: types.Message):
