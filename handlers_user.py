@@ -1,16 +1,15 @@
 import logging
 from aiogram import types
 from aiogram.dispatcher import FSMContext
-from aiogram.contrib.fsmstorage.memory import MemoryStorage
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
 import pytz
 
-from db import userstable, conteststable, partstable, substable, User, Contest, Part
-from config import ADMINIDS
+from db import users_table, contests_table, parts_table, subs_table, User, Contest, Part
+from config import ADMIN_IDS
 
-# 1) Состояния для FSM
 class ParticipationStates(StatesGroup):
     Confirm  = State()
     R1       = State()
@@ -22,82 +21,72 @@ class ParticipationStates(StatesGroup):
 class SettingsStates(StatesGroup):
     Timezone = State()
 
-# ———————————————————————————————————————————
-# ВСПОМОГАТЕЛИ
-def getorcreateuser(userid):
-    rec = userstable.get(User.userid==userid)
+def get_or_create_user(user_id):
+    rec = users_table.get(User.user_id==user_id)
     if not rec:
-        userstable.insert({
-            "userid":userid,
-            "jamcoins":0,
+        users_table.insert({
+            "user_id":user_id,
+            "jam_coins":0,
             "notify":False,
             "timezone":"UTC"
         })
-        rec = userstable.get(User.userid==userid)
+        rec = users_table.get(User.user_id==user_id)
     return rec
 
-# ———————————————————————————————————————————
-# КОМАНДА /start и главное меню
-async def cmdstart(message: types.Message):
-    getorcreateuser(message.fromuser.id)
-    kb = InlineKeyboardMarkup(rowwidth=2)
+async def cmd_start(message: types.Message):
+    get_or_create_user(message.from_user.id)
+    kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-      InlineKeyboardButton("Профиль",  callbackdata="profile"),
-      InlineKeyboardButton("Jamы",      callbackdata="jams"),
-      InlineKeyboardButton("Проходящие/Запланированные", callbackdata="ojj"),
-      InlineKeyboardButton("Настройки", callbackdata="settings")
+      InlineKeyboardButton("Профиль",  callback_data="profile"),
+      InlineKeyboardButton("Jamы",      callback_data="jams"),
+      InlineKeyboardButton("Проходящие/Запланированные", callback_data="ojj"),
+      InlineKeyboardButton("Настройки", callback_data="settings")
     )
-    await message.answer("👋 Добро пожаловать в 3D Jam Bot!\nВыберите пункт меню:", replymarkup=kb)
+    await message.answer("👋 Добро пожаловать в 3D Jam Bot!\nВыберите пункт меню:", reply_markup=kb)
 
-# ———————————————————————————————————————————
-# Обработка нажатий из главного меню
-async def callbackmain(call: types.CallbackQuery, state: FSMContext):
-    user = getorcreateuser(call.fromuser.id)
+async def callback_main(call: types.CallbackQuery, state: FSMContext):
+    user = get_or_create_user(call.from_user.id)
     data = call.data
+
     if data=="profile":
-        # Собираем статистику
-        parts = partstable.search(Part.userid==call.fromuser.id)
+        parts = parts_table.search(Part.user_id==call.from_user.id)
         total = len(parts)
-        # средний рейтинг (берем у тех, у кого rating>0)
-rates = p["rating" for p in substable.all() if p.get("rating",0)>0 and p["userid"]==call.fromuser.id]
+        rates = [p["rating"] for p in subs_table.all()
+                 if p.get("rating",0)>0 and p["user_id"]==call.from_user.id]
         avg = sum(rates)/len(rates) if rates else 0
-        # список названий
         names = []
         for p in parts:
-            c = conteststable.get(docid=p["contestid"])
-            if c: names.append(c"name")
+            c = contests_table.get(doc_id=p["contest_id"])
+            if c: names.append(c["name"])
         txt = (
             f"👤 Профиль:\n"
             f"Участий: {total}\n"
-            f"Jam Coins: {user'jam_coins'}\n"
+            f"Jam Coins: {user['jam_coins']}\n"
             f"Средний рейтинг: {avg:.2f}\n"
             f"Список Jam’ов: {', '.join(names) if names else '—'}\n"
-            f"Уведомления о новых конкурсах: {'✅' if user'notify' else '❌'}\n"
-            f"Часовой пояс: {user'timezone'}"
+            f"Уведомления о новых конкурсах: {'✅' if user['notify'] else '❌'}\n"
+            f"Часовой пояс: {user['timezone']}"
         )
         kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("⌚️ Изменить часовой пояс", callbackdata="settz"))
-        kb.add(InlineKeyboardButton("🔔 Переключить уведомления", callbackdata="togglenotify"))
-        await call.message.answer(txt, replymarkup=kb)
+        kb.add(InlineKeyboardButton("⌚️ Изменить часовой пояс", callback_data="set_tz"))
+        kb.add(InlineKeyboardButton("🔔 Переключить уведомления", callback_data="toggle_notify"))
+        await call.message.answer(txt, reply_markup=kb)
 
-    elif data=="togglenotify":
-        userstable.update({"notify": not user["notify"]}, User.userid==call.fromuser.id)
-        await call.answer("Настройка сохранена", showalert=True)
+    elif data=="toggle_notify":
+        users_table.update({"notify": not user["notify"]},
+                           User.user_id==call.from_user.id)
+        await call.answer("Настройка сохранена", show_alert=True)
         await call.message.delete()
 
-    elif data=="settz":
+    elif data=="set_tz":
         await SettingsStates.Timezone.set()
         await call.message.answer("Введите ваш часовой пояс (пример: Europe/Moscow):")
 
-    elif data=="settings":
-        # тот же профиль можно сюда вынести
-        await call.answer("В настройках пока доступен только часовой пояс и уведомления.", showalert=True)
-
     elif data=="jams" or data=="ojj":
         now = datetime.utcnow()
-        ongoing = 
-        upcoming = 
-        for c in conteststable.all():
+        ongoing = []
+        upcoming = []
+        for c in contests_table.all():
             start = datetime.fromisoformat(c["start"])
             end   = datetime.fromisoformat(c["end"])
             if start<= now <= end:
@@ -111,90 +100,84 @@ rates = p["rating" for p in substable.all() if p.get("rating",0)>0 and p["userid
         for c in upcoming:
             txt += f"{c['id']}. {c['name']} ({c['start']}—{c['end']})\n"
 
-        kb = InlineKeyboardMarkup(rowwidth=1)
+        kb = InlineKeyboardMarkup(row_width=1)
         for c in ongoing+upcoming:
-            # проверим, участвует ли юзер
-            part = partstable.get((Part.userid==call.fromuser.id)&(Part.contestid==c.docid))
+            part = parts_table.get((Part.user_id==call.from_user.id)&
+                                   (Part.contest_id==c.doc_id))
             text = f"{'✅' if part and part['confirmed'] else 'Участвовать'}: {c['name']}"
-            kd   = f"participate:{c.docid}"
-            kb.add(InlineKeyboardButton(text, callbackdata=kd))
-        await call.message.answer(txt, replymarkup=kb)
+            kd   = f"participate:{c.doc_id}"
+            kb.add(InlineKeyboardButton(text, callback_data=kd))
+        await call.message.answer(txt, reply_markup=kb)
 
     elif data.startswith("participate:"):
-        cid = int(data.split(":")1)
-        # создадим запись участия если нет
-        part = partstable.get((Part.userid==call.fromuser.id)&(Part.contestid==cid))
+        cid = int(data.split(":")[1])
+        part = parts_table.get((Part.user_id==call.from_user.id)&
+                               (Part.contest_id==cid))
         if not part:
-            partstable.insert({
-                "userid": call.fromuser.id,
-                "contestid": cid,
+            parts_table.insert({
+                "user_id": call.from_user.id,
+                "contest_id": cid,
                 "confirmed": False,
                 "rating": 0
             })
-        await call.answer("Введите «да», чтобы подтвердить участие.", showalert=True)
+        await call.answer("Введите «да», чтобы подтвердить участие.",
+                          show_alert=True)
         await ParticipationStates.Confirm.set()
-        # сохраним в FSM текущее contestid
-        state = call.state.proxy()
-        await state.updatedata(contestid=cid)
+        await state.update_data(contest_id=cid)
 
     await call.answer()
 
-# ———————————————————————————————————————————
-# Подтверждение участия
-async def participationconfirm(message: types.Message, state: FSMContext):
+async def participation_confirm(message: types.Message, state: FSMContext):
     if message.text.strip().lower()!="да":
         await message.answer("Отмена.")
         await state.finish()
         return
-    data = await state.getdata()
-    cid = data["contestid"]
-    # отметим confirmed
-    partstable.update({"confirmed":True}, (Part.userid==message.fromuser.id)&(Part.contestid==cid))
-    await message.answer("✅ Ваше участие подтверждено.\nТеперь вы можете загрузить работу командой /submit")
+    data = await state.get_data()
+    cid = data["contest_id"]
+    parts_table.update({"confirmed":True},
+        (Part.user_id==message.from_user.id)&(Part.contest_id==cid))
+    await message.answer("✅ Ваше участие подтверждено.\n"
+                         "Теперь вы можете загрузить работу командой /submit")
     await state.finish()
 
-# ———————————————————————————————————————————
-# Команда /submit для начала загрузки
 async def cmd_submit(message: types.Message):
-    # ожидаем: /submit <contest_id>
     try:
         cid = int(message.text.split()[1])
     except:
         await message.answer("Использование: /submit <id конкурса>")
         return
-    part = parts_table.get((Part.user_id==message.from_user.id)&(Part.contest_id==cid)&(Part.confirmed==True))
+    part = parts_table.get((Part.user_id==message.from_user.id)&
+                           (Part.contest_id==cid)&(Part.confirmed==True))
     if not part:
         await message.answer("Сначала подтвердите участие в этом Jam’е.")
         return
-    # проверим срок
     c = contests_table.get(doc_id=cid)
     now = datetime.utcnow()
     if now > datetime.fromisoformat(c["end"]):
-        await message.answer("⏰ К сожалению, вы пропустили дедлайн – вы выбыли из конкурса.")
+        await message.answer("⏰ Вы пропустили дедлайн – вы выбыли.")
         return
-    # начинаем FSM
     await ParticipationStates.R1.set()
-    state = message._state.proxy()
     await state.update_data(contest_id=cid, renders=[])
     await message.answer("Загрузите первый рендер (фото).")
 
-async def process_render1(photo: types.PhotoSize, state: FSMContext, message: types.Message):
-    data = await state.get_data()
-    renders = data["renders"]
-    # сохраняем file_id
-    renders.append(photo[-1].file_id)
-    await state.update_data(renders=renders)
-    await ParticipationStates.next()
-    await message.answer("Загрузите второй рендер.")
-
-async def process_render2(photo: types.PhotoSize, state: FSMContext, message: types.Message):
+async def process_render1(photo: types.PhotoSize, state: FSMContext,
+                          message: types.Message):
     data = await state.get_data()
     renders = data["renders"] + [photo[-1].file_id]
     await state.update_data(renders=renders)
     await ParticipationStates.next()
-    await message.answer("Загрузите третий рендер.")
+    await message.answer("Загрузите второй рендер.")
 
-async def process_render3(photo: types.PhotoSize, state: FSMContext, message: types.Message):
+async def process_render2(photo: types.PhotoSize, state: FSMContext,
+                          message: types.Message):
+    data = await state.get_data()
+    renders = data["renders"] + [photo[-1].file_id]
+    await state.update_data(renders=renders)
+    await ParticipationStates.next()
+                              await message.answer("Загрузите третий рендер.")
+
+async def process_render3(photo: types.PhotoSize, state: FSMContext,
+                          message: types.Message):
     data = await state.get_data()
     renders = data["renders"] + [photo[-1].file_id]
     await state.update_data(renders=renders)
@@ -206,10 +189,10 @@ async def process_desc(message: types.Message, state: FSMContext):
     await ParticipationStates.next()
     await message.answer("И, наконец, загрузите файл‑исходник.")
 
-async def process_file(doc: types.Document, state: FSMContext, message: types.Message):
+async def process_file(doc: types.Document, state: FSMContext,
+                       message: types.Message):
     data = await state.get_data()
     cid = data["contest_id"]
-    # сохраняем submission
     subs_table.insert({
         "user_id": message.from_user.id,
         "contest_id": cid,
@@ -220,7 +203,6 @@ async def process_file(doc: types.Document, state: FSMContext, message: types.Me
         "rating": 0
     })
     await message.answer("🎉 Ваша работа успешно загружена!")
-    # шлём админам уведомление
     for adm in ADMIN_IDS:
         try:
             await message.bot.send_message(adm,
@@ -231,29 +213,32 @@ async def process_file(doc: types.Document, state: FSMContext, message: types.Me
             pass
     await state.finish()
 
-# ———————————————————————————————————————————
-# Изменение часового пояса
 async def set_timezone(message: types.Message, state: FSMContext):
     tz = message.text.strip()
     if tz not in pytz.all_timezones:
         await message.answer("Неверный часовой пояс. Попробуйте ещё раз.")
         return
-    users_table.update({"timezone":tz}, User.user_id==message.from_user.id)
+    users_table.update({"timezone":tz},
+                       User.user_id==message.from_user.id)
     await message.answer(f"Часовой пояс установлен: {tz}")
     await state.finish()
 
-# ———————————————————————————————————————————
 def register_handlers(dp):
     dp.register_message_handler(cmd_start, commands=["start"])
     dp.register_callback_query_handler(callback_main, lambda c: True, state="*")
 
-    dp.register_message_handler(participation_confirm, state=ParticipationStates.Confirm)
+    dp.register_message_handler(participation_confirm,
+                                state=ParticipationStates.Confirm)
     dp.register_message_handler(cmd_submit, commands=["submit"])
-
-    dp.register_message_handler(process_render1, state=ParticipationStates.R1, content_types=types.ContentType.PHOTO)
-    dp.register_message_handler(process_render2, state=ParticipationStates.R2, content_types=types.ContentType.PHOTO)
-    dp.register_message_handler(process_render3, state=ParticipationStates.R3, content_types=types.ContentType.PHOTO)
-    dp.register_message_handler(process_desc, state=ParticipationStates.Desc, content_types=types.ContentType.TEXT)
-    dp.register_message_handler(process_file, state=ParticipationStates.File, content_types=types.ContentType.DOCUMENT)
-
-    dp.register_message_handler(set_timezone, state=SettingsStates.Timezone)
+    dp.register_message_handler(process_render1, state=ParticipationStates.R1,
+                                content_types=types.ContentType.PHOTO)
+    dp.register_message_handler(process_render2, state=ParticipationStates.R2,
+                                content_types=types.ContentType.PHOTO)
+    dp.register_message_handler(process_render3, state=ParticipationStates.R3,
+                                content_types=types.ContentType.PHOTO)
+    dp.register_message_handler(process_desc, state=ParticipationStates.Desc,
+                                content_types=types.ContentType.TEXT)
+    dp.register_message_handler(process_file, state=ParticipationStates.File,
+                                content_types=types.ContentType.DOCUMENT)
+    dp.register_message_handler(set_timezone,
+                                state=SettingsStates.Timezone)
