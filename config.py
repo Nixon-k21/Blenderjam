@@ -1,7 +1,11 @@
 import os
 
 BOT_TOKEN    = os.getenv("BOT_TOKEN")       # Ваш токен бота
-ADMIN_IDS    = list(map(int, os.getenv("ADMIN_IDS","").split(",")))  
+# ADMIN_IDS берётся из ENV в формате "12345678,87654321"
+ADMIN_IDS = [
+    int(x) for x in os.getenv("ADMIN_IDS", "")
+                .split(",") if x.strip()
+] 
 # Пример: "12345678,87654321"
 
 # для Webhook
